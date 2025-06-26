@@ -137,18 +137,20 @@ writeRaster(rastpop_disab_2021_1k,paste0(output,"rastpop_disab_2021_1k.tif"))
 # 3. MAP RESULTS SO THEY CAN BE REVIEWED ======================================
 
 
-raster_data <- rast(paste0(output,"rastpop_disab_2021_100m.tif"))
-
+raster_100m <- rast(paste0(output,"rastpop_disab_2021_100m.tif"))
+raster_1km <- rast(paste0(output,"rastpop_disab_2021_1k.tif"))
 # options(viewer = NULL) # force map on browser
+library(RColorBrewer)
 
 # Create a color palette with transparent NA values
 colorPalette <- colorNumeric(
-  palette = "Oranges",  
+  palette = "YlOrBr",  # or reversed: rev(brewer.pal(9, "YlOrBr"))
   domain = values(raster_data),
-  na.color = "transparent"  # Specify transparent color for NA values
+  na.color = "transparent"
 )
+
 # title
-title_text <- "<div style='font-family: Calibri, sans-serif; font-size: 22px; font-weight: bold;'>TONGA - 2025 Population Grid</div>"
+title_text <- "<div style='font-family: Calibri, sans-serif; font-size: 22px; font-weight: bold;'>TONGA - Disab grid experiment</div>"
 
 # to check tile providers https://leaflet-extras.github.io/leaflet-providers/preview/
 
@@ -162,28 +164,50 @@ map_labels <- leaflet() %>%
     position = "topright",  # Change legend position to "topright"
     pal = colorPalette,  # Use the reversed color palette
     values = values(raster_data),
-    title = "Population Density <br> (pers./ha)",
+    title = "Disability <br> (pers./ha)",
     opacity = 0.5
   )
 
 map_labels
+# Maps with sat image and the two rasters 
+# Create a shared color palette for both rasters
+all_values <- c(values(raster_1km), values(raster_100m))
+pal <- colorNumeric(
+  palette = "YlOrBr",
+  domain = all_values,
+  na.color = "transparent"
+)
 
-map_sat <- leaflet((options = leafletOptions(viewer = NULL))) %>%
+map_sat <- 
+  leaflet((options = leafletOptions(viewer = NULL))) %>%
   addControl(html = title_text, position = "topright") %>% 
   addProviderTiles("Esri.WorldImagery") %>%  # Choose your preferred tile provider
-  addRasterImage(raster_data, 
+  # 100m
+  addRasterImage(raster_100m, 
                  colors = colorPalette, 
-                 opacity = 0.8) %>%
+                 opacity = 0.8,
+                 group = "100m Resolution") %>%
+  # 1km
+  addRasterImage(raster_1km, 
+                 colors = colorPalette, 
+                 opacity = 0.8,
+                 group = "1km Resolution") %>%
+  # Add layer toggle
+  addLayersControl(
+    baseGroups = c("1km Resolution", "100m Resolution"),
+    options = layersControlOptions(collapsed = FALSE)
+  ) %>%
+  # Add legend (shared)
   addLegend(
-    position = "topright",  # Change legend position to "topright"
-    pal = colorPalette,  # Use the reversed color palette
-    values = values(raster_data),
-    title = "Population Density <br> (pers./ha)",
-    opacity = 0.8
+    pal = pal,
+    values = all_values,
+    title = "Disability<br>(pers./ha)",
+    position = "bottomright",
+    opacity = 0.6
   )
 map_sat
 
 # Produce a map as html that can be shared as it is selfcontained using "htmlwidgets" library
-
-saveWidget(map_sat, file = paste0(dmap, "ton_ppg_2025.html"), selfcontained = TRUE)
+# Save it into github so it can be accessed ????
+saveWidget(map_sat, file ="ton_disabgrid.html", selfcontained = TRUE)
 

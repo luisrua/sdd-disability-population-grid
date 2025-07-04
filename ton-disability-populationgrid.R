@@ -40,44 +40,15 @@ view(get_labels(pop))
 hous_lite <- hous %>% 
   select(c(interview__key,block_no, census_unit, district, village, buildingGPS__Latitude,buildingGPS__Longitude ))
 pop_lite <- pop %>% 
-  select(c(interview__key, sex, age, seeing, hearing, walking, remembering, selfcare, communication)) %>% 
+  select(c(interview__key, sex, age, seeing, hearing, walking, remembering, selfcare, communication, 
+           some_disab, alot_disab, cannot_disab)) %>% 
   filter(age>4)
 
-
-# Note: filter disability data and keep coordinates and EA codes
-# Filter population by disability ILO criteria
-# A lot of difficulties (at least one domain scored “a lot of difficulties” or “cannot do at all” 
-# in at least one of the six domains).
-
-pop_lite <- pop_lite %>%
-  mutate(
-    # Detailed disability status
-    ilo_dsb_details = case_when(
-      communication == 1 & hearing == 1 & remembering == 1 &
-        seeing == 1 & walking == 1 & selfcare == 1 ~ 1,
-      communication == 2 | hearing == 2 | remembering == 2 |
-        seeing == 2 | walking == 2 | selfcare == 2 ~ 2,
-      communication == 3 | hearing == 3 | remembering == 3 |
-        seeing == 3 | walking == 3 | selfcare == 3 ~ 3,
-      communication == 4 | hearing == 4 | remembering == 4 |
-        seeing == 4 | walking == 4 | selfcare == 4 ~ 4,
-      TRUE ~ 1  # Treat NAs as "No difficulty"
-    ),
-    
-    # Aggregate disability status
-    ilo_dsb_aggregate = case_when(
-      ilo_dsb_details %in% c(1, 2) ~ 1,  # Persons without disability
-      ilo_dsb_details %in% c(3, 4) ~ 2, # Persons with disability
-      TRUE ~ NA_real_
-    )
-  )
-table(pop_lite$ilo_dsb_aggregate)
-
-# Keep population with disability
+# Use directly ILO alot disability cutoff
 pop_disab <- pop_lite %>% 
-  filter(ilo_dsb_aggregate == 2) %>% 
-  mutate(with_disab = ifelse(ilo_dsb_aggregate == 2,1,0)) %>% 
-  print()
+  filter(alot_disab == 1)
+
+
 # Add geographic info and admin bound codes
 pop_disab_geo <- merge(pop_disab, hous_lite, by = "interview__key", all.x = T)
 # Run tabulations to double check with census results (ask Elsie)
@@ -121,9 +92,13 @@ crs(rast100m) <- crs(pts)
 rast100m
 
 # Produce raster using the census data
-rastpop_disab_2021_100m <- rasterize(pts,rast100m, 'with_disab', fun=sum )
+rastpop_disab_2021_100m <- rasterize(pts,rast100m, 'alot_disab', fun=sum )
 
-rastpop_disab_2021_1k <- rasterize(pts,rast1k, 'with_disab', fun=sum )
+rastpop_disab_2021_1k <- rasterize(pts,rast1k, 'alot_disab', fun=sum )
+
+# Calculate totals for double check
+total_disab_100m <- cellStats(rastpop_disab_2021_100m, sum, na.rm = TRUE) %>%  print()
+total_disab_1k <- cellStats(rastpop_disab_2021_1k, sum, na.rm = TRUE) %>%  print()
 
 hist(rastpop_disab_2021_100m, na.rm=T)
 hist(rastpop_disab_2021_1k, na.rm=T)
@@ -132,8 +107,8 @@ hist(rastpop_disab_2021_1k, breaks = 50, main = "Histogram of Raster Values 1km"
 hist(rastpop_disab_2021_100m, breaks = 20, main = "Histogram of Raster Values 100m", xlab = "Value")
 
 # Export rasters
-writeRaster(rastpop_disab_2021_100m,paste0(output,"rastpop_disab_2021_100m.tif"))
-writeRaster(rastpop_disab_2021_1k,paste0(output,"rastpop_disab_2021_1k.tif"))
+writeRaster(rastpop_disab_2021_100m,paste0(output,"rastpop_disab_2021_100m.tif"), overwrite = T)
+writeRaster(rastpop_disab_2021_1k,paste0(output,"rastpop_disab_2021_1k.tif"), overwrite = T)
 # 3. MAP RESULTS SO THEY CAN BE REVIEWED ======================================
 
 
@@ -142,41 +117,24 @@ raster_1km <- rast(paste0(output,"rastpop_disab_2021_1k.tif"))
 # options(viewer = NULL) # force map on browser
 library(RColorBrewer)
 
-# Create a color palette with transparent NA values
-colorPalette <- colorNumeric(
-  palette = "YlOrBr",  # or reversed: rev(brewer.pal(9, "YlOrBr"))
-  domain = values(raster_data),
+# Corrected palette for the 100m raster
+colorPalette100m <- colorBin(
+  palette = "YlOrBr",
+  domain = values(raster_100m),
+  bins = 5, # Creates 5 equal-interval bins
+  na.color = "transparent"
+)
+
+# Corrected palette for the 1km raster
+colorPalette1km <- colorBin(
+  palette = "YlOrBr",
+  domain = values(raster_1km),
+  bins = 5, # Creates 5 equal-interval bins
   na.color = "transparent"
 )
 
 # title
 title_text <- "<div style='font-family: Calibri, sans-serif; font-size: 22px; font-weight: bold;'>TONGA - Disab grid experiment</div>"
-
-# to check tile providers https://leaflet-extras.github.io/leaflet-providers/preview/
-
-map_labels <- leaflet() %>%
-  addControl(html = title_text, position = "topright") %>% 
-  addProviderTiles("CartoDB.DarkMatter") %>%  # Choose your preferred tile provider
-  addRasterImage(raster_data, 
-                 colors = colorPalette, 
-                 opacity = 0.5) %>%
-  addLegend(
-    position = "topright",  # Change legend position to "topright"
-    pal = colorPalette,  # Use the reversed color palette
-    values = values(raster_data),
-    title = "Disability <br> (pers./ha)",
-    opacity = 0.5
-  )
-
-map_labels
-# Maps with sat image and the two rasters 
-# Create a shared color palette for both rasters
-all_values <- c(values(raster_1km), values(raster_100m))
-pal <- colorNumeric(
-  palette = "YlOrBr",
-  domain = all_values,
-  na.color = "transparent"
-)
 
 map_sat <- 
   leaflet((options = leafletOptions(viewer = NULL))) %>%
@@ -184,12 +142,12 @@ map_sat <-
   addProviderTiles("Esri.WorldImagery") %>%  # Choose your preferred tile provider
   # 100m
   addRasterImage(raster_100m, 
-                 colors = colorPalette, 
+                 colors = colorPalette100m, 
                  opacity = 0.8,
                  group = "100m Resolution") %>%
   # 1km
   addRasterImage(raster_1km, 
-                 colors = colorPalette, 
+                 colors = colorPalette1km, 
                  opacity = 0.8,
                  group = "1km Resolution") %>%
   # Add layer toggle
@@ -199,10 +157,17 @@ map_sat <-
   ) %>%
   # Add legend (shared)
   addLegend(
-    pal = pal,
-    values = all_values,
-    title = "Disability<br>(pers./ha)",
+    pal = colorPalette100m,
+    values = values(raster_100m),
+    title = "Disability - 100m Res.<br>(pers./ha)",
     position = "bottomright",
+    opacity = 0.6
+  ) %>% 
+  addLegend(
+    pal = colorPalette1km,
+    values = values(rast1k),
+    title = "Disability - 1km Res.<br>(pers./sq.km)",
+    position = "bottomleft",
     opacity = 0.6
   )
 map_sat
